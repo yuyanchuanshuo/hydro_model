@@ -1,3 +1,5 @@
 # .gitignore 文件内容
 data/
 *.log
+oned_hydro_model/data_input/
+oned_hydro_model/data_output/
