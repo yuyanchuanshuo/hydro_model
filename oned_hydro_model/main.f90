@@ -1,6 +1,7 @@
 program main
     implicit none
-    integer :: i, j, number, t_all, dt, t,j_out
+    integer :: i, j, number, t_all, t, j_out, t_all_hour, t_all_hour_out
+    real :: dt
     real, dimension(:, :), allocatable :: A, Q, Q0, A0, H, R
     real, dimension(:), allocatable :: n, dx, ZB
     integer :: file_unit  ! 添加文件单元号变量
@@ -24,7 +25,7 @@ program main
     integer :: n_sections
 
     ! 读取断面数据
-    call read_section_data('data_input/cross_section_data.csv', sections, n_sections)
+    call read_section_data('data_input/cross_section_data_huan.csv', sections, n_sections)
     allocate(section_hydraulics(n_sections))
 
     ! 计算水力特性
@@ -32,6 +33,8 @@ program main
         section_hydraulics(i)%section_id = sections(i)%id
         call calculate_hydraulic_properties(sections(i), section_hydraulics(i)%results)
     enddo
+
+    
 
     ! 新增：输出到文件
     open(newunit=file_unit, file='data_output/section_hydraulic_properties.txt', status='replace', action='write')
@@ -49,23 +52,25 @@ program main
     enddo
     close(file_unit)
 
-    number = n_sections !假设有100个断面，待修改
-    t_all = 100 !计算总时段
-    dt = 3 ! 计算间隔10s
+    number = n_sections     ! 断面数
+    t_all_hour = 50         ! 计算总时段，单位：小时
+    dt = 1                !计算间隔，单位：秒
+    t_all = int(t_all_hour * 3600 / dt)  !计算总时段
+    ! t_all = 5
 
     ! 分配数组内存
     allocate(A(number, t_all), A0(number, t_all), Q(number, t_all), Q0(number, t_all), R(number, t_all), H(number, t_all))!定义以断面为行，时间为列的矩阵
     allocate(n(number), dx(number), ZB(number))
 
-    Q0(:, 1) = 100 !假设每一个断面的第一时刻流量均为100m3/s
-    Q(:, 1) = 100 !假设每一个断面的第一时刻流量均为100m3/s
-    A0(:, 1) = 200 !假设每一个断面的第一时刻面积均为1000m2
-    A(:, 1) = 200 !假设每一个断面的第一时刻面积均为1000m2
-    A(number, :) = 100 ! 假设最后一个断面的所有时刻过水面积都是200
+    Q0(:, 1) = 100      ! 假设每一个断面的第一时刻流量均为100m3/s
+    Q(:, 1) = 100       ! 假设每一个断面的第一时刻流量均为100m3/s
+    A0(:, 1) = 200      ! 假设每一个断面的第一时刻面积均为1000m2
+    A(:, 1) = 200       ! 假设每一个断面的第一时刻面积均为1000m2
+    A(number, :) = 100  ! 假设最后一个断面的所有时刻过水面积都是200
 
     n = 0.035 ! 假设每一个断面的糙率均为0.035
 
-    do i = 2, number
+    do i = 1, number
         if(i == 1) then
             dx(i) = 0
             ZB(i) = minval(sections(i)%elevations)
@@ -76,11 +81,16 @@ program main
     enddo
 
     do i = 1, t_all ! 定义上边界入流，这个以后从文件中读取
-        Q0(1, i) = 100 + (150 - 100) * real(i - 1) / (t_all - 1)
-        Q(1, i) = 100 + (150 - 100) * real(i - 1) / (t_all - 1)
+        Q0(1, i) = 500 + (500 - 500) * real(i - 1) / (t_all - 1)
+        Q(1, i) = 500 + (500 - 500) * real(i - 1) / (t_all - 1)
     enddo
 
-    j_out = 100
+    j_out = 5
+    t_all_hour_out = 1
+
+    open(newunit=file_unit_all, file='output_all_sections_at_t3600.txt', status='replace', action='write')
+    write(file_unit_all, '(A)') '断面编号  起点距(m)  流量(m3/s)  底高程(m)  水位(m)  面积(m2)' 
+
     do t = 1, t_all - 1
 
         call dis_cal(number, n, dx, dt, Q0(:, t), ZB, A(:, t), Q(:, t + 1), H(:, t))  ! 使用call调用子例程
@@ -89,8 +99,18 @@ program main
         A(:, t + 1) = area_cal(number, dt, Q(:, t + 1), A0(:, t), dx)
         A0(:, t + 1) = A(:, t + 1) ! 定义这个断面输入的A
 
-        print *, '第', t, '时刻', j_out, '个断面的流量为：', Q(j_out, t), A(j_out, t), H(j_out, t)
+        if (nint(t * dt)  == t_all_hour_out*3600 ) then
 
+            print *, '第', t_all_hour_out, '个小时', j_out, '个断面的流量为：', Q(j_out, t), A(j_out, t), H(j_out, t)
+
+            t_all_hour_out = t_all_hour_out +1
+        endif
+         ! 在t=2000时刻输出所有断面结果
+        if (t == 3600*49) then
+            do i = 1, number
+                write(file_unit_all, '(A10, F15.6, F15.6, F15.6, F15.6, F15.6)') trim(section_hydraulics(i)%section_id),sections(i)%start_distance, Q(i, t), ZB(i), H(i, t), A(i, t)
+            enddo
+        endif
     enddo
 
     ! 关闭文件
@@ -105,14 +125,15 @@ contains
         implicit none
         integer :: ii
         integer, intent(in) :: n_size
-        integer, intent(in) :: dt_in
+        real, intent(in) :: dt_in
         real, intent(in), dimension(n_size) :: Q_in, A_in, dx_in
         real, dimension(n_size) :: A_out
 
         Do ii = 1, n_size - 1
             A_out(ii) = A_in(ii) - 2 * dt_in * (Q_in(ii + 1) - Q_in(ii)) / ((dx_in(ii + 1) + dx_in(ii)) / 2)
         enddo
-        ! print *, A_out
+        ! print*,'面积计算',A_out(1), A_in(1), Q_in(2), Q_in(1)
+
     endfunction area_cal
 
     ! 添加处理起点距的函数
@@ -134,11 +155,14 @@ contains
     subroutine dis_cal(n_size, n_in, dx_in, dt_in, Q_in, ZB_in, A_in, Q_out, h_out) !函数只能返回一个结果变量，改用子例程
         implicit none
         integer :: iii
-        integer, intent(in) :: n_size, dt_in
+        integer, intent(in) :: n_size
+        real, intent(in) :: dt_in
         real, intent(in), dimension(n_size) :: dx_in, n_in
-        real, dimension(n_size) :: uu, Q_in, H_in, ZB_in, A_in, R_in, B, wetted_perimeter,ZZ
+        real, dimension(n_size) :: uu, Q_in, H_in, ZB_in, A_in, R_in, B, wetted_perimeter, ZZ
         real, dimension(n_size) :: Q_out, h_out
         real :: XDX, HDX, FRI, alfa = 1 !alfa动量修正系数，一般取1
+
+        
 
         Do iii = 1, n_size
             call find_hydraulic_properties(section_hydraulics(iii)%results, A_in(iii), ZZ(iii), B(iii), wetted_perimeter(iii), R_in(iii))
@@ -171,11 +195,15 @@ contains
             FRI = 9.8 * ABS(uu(iii)) * ((n_in(iii) + n_in(iii - 1)) / 2)**2 / & ! 计算FRI，除数的那一个
                   (2 * ((R_in(iii) + R_in(iii - 1)) / 2)**1.333)
 
+
+
             Q_out(iii) = (Q_in(iii) - 2.*dt_in * XDX - 2.*dt_in * HDX - 2.*dt_in * FRI * Q_in(iii)) / (1.+2.*dt_in * FRI)
+
+            ! print *, '流量计算',Q_in(iii),Q_out(iii), XDX, HDX, FRI
 
         enddo
 
-    endsubroutine dis_cal 
+    endsubroutine dis_cal
 
     ! 添加断面数据读取子程序
     subroutine read_section_data(filename, sections_out, n_sections_out)
@@ -379,13 +407,13 @@ contains
                result_in(ii + 1, 2) >= A_in) then
                 ! 线性插值
                 h_out = result_in(ii, 1) + (A_in - result_in(ii, 2)) * (result_in(ii + 1, 1) - result_in(ii, 1)) / &
-                              (result_in(ii + 1, 2) - result_in(ii, 2))
+                        (result_in(ii + 1, 2) - result_in(ii, 2))
                 B_out = result_in(ii, 3) + (A_in - result_in(ii, 2)) * (result_in(ii + 1, 3) - result_in(ii, 3)) / &
                         (result_in(ii + 1, 2) - result_in(ii, 2))
-                wp_out = result_in(ii, 4) + (A_in - result_in(ii, 2)) *  (result_in(ii + 1, 4) - result_in(ii, 4)) / &
-                                   (result_in(ii + 1, 2) - result_in(ii, 2))
+                wp_out = result_in(ii, 4) + (A_in - result_in(ii, 2)) * (result_in(ii + 1, 4) - result_in(ii, 4)) / &
+                         (result_in(ii + 1, 2) - result_in(ii, 2))
                 R_out = result_in(ii, 5) + (A_in - result_in(ii, 2)) * (result_in(ii + 1, 5) - result_in(ii, 5)) / &
-                                   (result_in(ii + 1, 2) - result_in(ii, 2))
+                        (result_in(ii + 1, 2) - result_in(ii, 2))
                 exit
             endif
         enddo
